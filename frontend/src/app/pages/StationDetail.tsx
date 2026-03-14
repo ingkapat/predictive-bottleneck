@@ -82,12 +82,11 @@ export default function StationDetail() {
     </div>
   );
 
-  // comparison data with predictedScore
+  // comparison: bottleneck score current vs predicted
   const comparisonData = data.comparison.map(c => ({
-    name: c.machine,
-    queue: c.blocked,
-    predictedQueue: (c as any).predictedScore ?? c.score,
-    utilization: c.starved,
+    name:           c.machine,
+    queue:          c.score,
+    predictedQueue: (c as any).predictedScore ?? 0,
   }));
 
   return (
@@ -246,63 +245,37 @@ export default function StationDetail() {
                 <Cpu className="w-5 h-5 text-indigo-400" /> Factory Station Comparison
               </h3>
             </div>
-            <div className="flex flex-col gap-8 flex-1">
+            <div className="flex flex-col gap-4 flex-1">
 
               {/* Legend */}
               <div className="flex items-center gap-5 text-xs text-slate-400">
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-sm inline-block bg-blue-500"></span>
-                  Current Block Time
+                  Current Bottleneck Score
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-sm inline-block bg-red-500"></span>
-                  Predicted Block Time
+                  Predicted Bottleneck Score
                 </span>
               </div>
 
-              {/* Block Time Current vs Predicted */}
-              <div className="flex-1 min-h-[250px] flex flex-col">
+              {/* Bottleneck Score Current vs Predicted */}
+              <div className="flex-1 flex flex-col">
                 <h4 className="text-sm text-slate-400 mb-4 font-medium uppercase tracking-wider flex items-center gap-2">
-                  <Server className="w-3 h-3" /> Block time (Current vs Predicted)
+                  <Zap className="w-3 h-3" /> Bottleneck Score (Current vs Predicted)
                 </h4>
-                <div className="flex-1 w-full min-h-[250px]">
-                  <ResponsiveContainer width="100%" height={250}>
+                <div className="flex-1 w-full">
+                  <ResponsiveContainer width="100%" height={320}>
                     <BarChart data={comparisonData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }} barGap={3} barSize={20}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                      <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickMargin={10} />
+                      <XAxis dataKey="name" stroke="#64748b" fontSize={11} tickMargin={10} />
                       <YAxis stroke="#64748b" fontSize={10} />
                       <Tooltip
-                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px' }}
+                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', color: '#f8fafc' }}
                         cursor={{ fill: '#1e293b', opacity: 0.4 }}
                       />
-                      <Bar dataKey="queue" name="Current Block time" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="predictedQueue" name="Predicted Block time" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Starved Time Rate */}
-              <div className="flex-1 min-h-[200px] flex flex-col">
-                <h4 className="text-sm text-slate-400 mb-4 font-medium uppercase tracking-wider flex items-center gap-2">
-                  <Activity className="w-3 h-3" /> Starved Time Rate
-                </h4>
-                <div className="flex-1 w-full min-h-[250px]">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={comparisonData} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }} barSize={16}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                      <XAxis type="number" stroke="#64748b" fontSize={10} />
-                      <YAxis dataKey="name" type="category" stroke="#64748b" fontSize={10} width={30} tickMargin={5} />
-                      <Tooltip
-                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px' }}
-                        cursor={{ fill: '#1e293b', opacity: 0.4 }}
-                        formatter={(value) => [`${value} min`, 'Starved Time']}
-                      />
-                      <Bar dataKey="utilization" radius={[0, 4, 4, 0]}>
-                        {comparisonData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.utilization > 10 ? '#ef4444' : entry.utilization > 5 ? '#fb923c' : '#10b981'} />
-                        ))}
-                      </Bar>
+                      <Bar dataKey="queue" name="Current Score" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="predictedQueue" name="Predicted Score" fill="#ef4444" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

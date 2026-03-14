@@ -1,3 +1,7 @@
 fastapi
 uvicorn[standard]
 pandas
+tensorflow
+scikit-learn
+joblib
+numpy
