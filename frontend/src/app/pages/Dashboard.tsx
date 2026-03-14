@@ -28,14 +28,23 @@ const getStatusDot = (status: string) => {
   }
 };
 
+// ── Working hours: Mon–Fri 08:00–17:00 ───────────────────────────────────────
+function isWorkingHours(date: Date): boolean {
+  const day  = date.getDay();   // 0=Sun 1=Mon … 6=Sat
+  const hour = date.getHours();
+  return day >= 1 && day <= 5 && hour >= 8 && hour < 17;
+}
+
 export default function Dashboard() {
   const [data, setData]               = useState<DashboardData | null>(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [now, setNow]                 = useState<Date>(new Date());
+  const [isOnline, setIsOnline]       = useState<boolean>(isWorkingHours(new Date()));
 
   const load = async () => {
+    // fetch ทุกครั้ง แต่ auto-refresh เฉพาะในเวลางาน
     try {
       setError(null);
       const d = await fetchDashboard();
@@ -49,9 +58,19 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    load();
-    const dataInterval  = setInterval(() => load(), 15 * 60 * 1000);
-    const clockInterval = setInterval(() => setNow(new Date()), 1000);
+    load(); // fetch ครั้งแรกเสมอ
+    // auto-refresh interval จะ skip นอกเวลางาน
+
+    const dataInterval  = setInterval(() => {
+      const working = isWorkingHours(new Date());
+      setIsOnline(working);
+      if (working) load();
+    }, 15 * 60 * 1000);
+    const clockInterval = setInterval(() => {
+      const t = new Date();
+      setNow(t);
+      setIsOnline(isWorkingHours(t));
+    }, 1000);
     return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
   }, []);
 
@@ -99,13 +118,22 @@ export default function Dashboard() {
           </button>
           <div className="flex items-center gap-4 bg-[#111827] px-4 py-2 rounded-lg border border-slate-800 shadow-inner">
             <div className="flex items-center gap-2">
-              <>
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                </span>
-                <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">System Online</span>
-              </>
+              {isOnline ? (
+                <>
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">System Online</span>
+                </>
+              ) : (
+                <>
+                  <span className="relative flex h-3 w-3">
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-slate-500"></span>
+                  </span>
+                  <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">System Offline</span>
+                </>
+              )}
             </div>
             <div className="h-4 w-px bg-slate-700"></div>
             <span className="text-xs text-white font-mono font-bold">{now.toLocaleTimeString()}</span>
