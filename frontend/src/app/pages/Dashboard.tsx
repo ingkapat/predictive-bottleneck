@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router';
-import { fetchDashboard, type DashboardData, type Station } from '../data';
-import { LineChart, Line, ResponsiveContainer } from 'recharts';
+import { fetchDashboard, type DashboardData } from '../data';
+import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from 'recharts';
 import { AlertTriangle, TrendingUp, Activity, Server, Cpu, ArrowUpRight, ShieldAlert, Zap, Factory, RefreshCw } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -28,12 +28,31 @@ const getStatusDot = (status: string) => {
   }
 };
 
+// ── Working hours helpers ──────────────────────────────────────────────────────
+function isWorkingHours(d: Date): boolean {
+  const day = d.getDay();
+  const hour = d.getHours();
+  if (day === 0 || day === 6) return false;
+  return hour >= 8 && hour < 17;
+}
+
+function getOffMessage(d: Date): string {
+  const day = d.getDay();
+  const hour = d.getHours();
+  if (day === 0 || day === 6) return 'วันหยุด — ระบบจะกลับมาทำงานวันจันทร์ เวลา 08:00';
+  if (hour < 8)  return 'นอกเวลาทำการ — ระบบจะเปิดเวลา 08:00';
+  if (hour >= 17) return 'นอกเวลาทำการ — ระบบจะเปิดพรุ่งนี้เวลา 08:00';
+  return '';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function Dashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [data, setData]               = useState<DashboardData | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-  const [now, setNow] = useState<Date>(new Date());
+  const [now, setNow]                 = useState<Date>(new Date());
+  const [isOff, setIsOff]             = useState<boolean>(!isWorkingHours(new Date()));
 
   const load = async () => {
     try {
@@ -42,7 +61,7 @@ export default function Dashboard() {
       setData(d);
       setLastUpdated(new Date());
     } catch (e) {
-      setError("Cannot connect to backend. Make sure FastAPI is running on port 8000.");
+      setError('Cannot connect to backend. Make sure FastAPI is running on port 8000.');
     } finally {
       setLoading(false);
     }
@@ -50,14 +69,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
-    const dataInterval = setInterval(load, 15 * 60 * 1000); // refresh every 15 min
-    const clockInterval = setInterval(() => setNow(new Date()), 1000); // clock ticks every 1s
-    return () => {
-      clearInterval(dataInterval);
-      clearInterval(clockInterval);
-    };
+    const dataInterval  = setInterval(() => load(), 15 * 60 * 1000);
+    const clockInterval = setInterval(() => {
+      const t = new Date();
+      setNow(t);
+      setIsOff(!isWorkingHours(t));
+    }, 1000);
+    return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
   }, []);
 
+  // ── Off-hours screen ──────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-[#0b0f19] flex items-center justify-center">
       <div className="text-center">
@@ -73,9 +94,7 @@ export default function Dashboard() {
         <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
         <p className="text-white font-semibold mb-2">Backend Offline</p>
         <p className="text-slate-400 text-sm mb-4">{error}</p>
-        <button onClick={load} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
-          Retry
-        </button>
+        <button onClick={() => load(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">Retry</button>
       </div>
     </div>
   );
@@ -83,36 +102,46 @@ export default function Dashboard() {
   if (!data) return null;
 
   const sortedStations = [...data.stations].sort((a, b) => b.riskScore - a.riskScore);
-  const currentBN  = data.stations.find(s => s.id === data.currentBottleneck)   || data.stations[0];
-  const predictedBN = data.stations.find(s => s.id === data.predictedBottleneck) || data.stations[0];
+  const currentBN   = data.stations.find(s => s.id === data.currentBottleneck)    || data.stations[0];
+  const predictedBN = data.stations.find(s => s.id === data.predictedBottleneck)  || data.stations[0];
 
   return (
     <div className="min-h-screen bg-[#0b0f19] text-slate-200 font-sans p-4 md:p-8">
-      {/* Header */}
+
+      {/* ── Header ── */}
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/60 pb-6">
         <div>
           <div className="flex items-center gap-3 text-blue-400 mb-1">
             <Factory className="w-6 h-6" />
             <h1 className="text-2xl font-bold tracking-tight text-white">Smart Factory Dashboard</h1>
           </div>
-          <p className="text-slate-400 text-sm tracking-wide uppercase">
-            Predictive Bottleneck Detector • Window {data.windowIndex.toLocaleString()} / {data.totalWindows.toLocaleString()}
-          </p>
+          <p className="text-slate-400 text-sm tracking-wide uppercase">Predictive Bottleneck Detector • Real-time AI Analytics</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={load} className="p-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
+          <button onClick={() => load(true)} className="p-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors" title="Refresh">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <div className="flex items-center gap-4 bg-[#111827] px-4 py-2 rounded-lg border border-slate-800 shadow-inner">
+          <div className={`flex items-center gap-4 px-4 py-2 rounded-lg border shadow-inner ${isOff ? 'bg-slate-900 border-slate-600' : 'bg-[#111827] border-slate-800'}`}>
             <div className="flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-              </span>
-              <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">System Online</span>
+              {isOff ? (
+                <>
+                  <span className="relative flex h-3 w-3">
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-slate-500"></span>
+                  </span>
+                  <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">System Offline</span>
+                </>
+              ) : (
+                <>
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-xs font-medium text-emerald-400 uppercase tracking-wider">System Online</span>
+                </>
+              )}
             </div>
             <div className="h-4 w-px bg-slate-700"></div>
-            <span className="text-xs text-slate-400 font-mono font-bold text-white">{now.toLocaleTimeString()}</span>
+            <span className="text-xs text-white font-mono font-bold">{now.toLocaleTimeString()}</span>
             <div className="h-4 w-px bg-slate-700"></div>
             <span className="text-xs text-slate-500 font-mono">Updated: {lastUpdated.toLocaleTimeString()}</span>
           </div>
@@ -121,7 +150,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-        {/* Current & Predicted Bottleneck */}
+        {/* ── Callout Cards ── */}
         <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6 mb-2">
 
           {/* Current Bottleneck */}
@@ -132,17 +161,16 @@ export default function Dashboard() {
               </div>
               <h2 className="text-lg font-semibold text-red-100">Current Bottleneck</h2>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
               <div className="flex flex-col justify-between">
                 <div>
                   <p className="text-sm text-red-400/70 uppercase tracking-wider mb-1">Station Name</p>
                   <Link to={`/station/${currentBN.machineKey}`} className="text-2xl font-bold text-white hover:text-red-300 transition-colors inline-flex items-center gap-2">
-                    {currentBN.machineKey}
+                    {currentBN.name.split(' (')[0]}
                     <ArrowUpRight className="w-5 h-5 opacity-50" />
                   </Link>
-                  <p className="text-xs text-slate-500 mt-1">{currentBN.name.split('(')[1]?.replace(')', '')}</p>
                 </div>
-                <div className="mt-4 bg-black/40 rounded-lg p-3 border border-red-900/30">
+                <div className="mt-4 bg-black/40 rounded-lg p-3 border border-red-900/30 w-full sm:w-3/4">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
                     <AlertTriangle className="w-3 h-3 text-red-500" /> Bottleneck Score
                   </p>
@@ -152,19 +180,15 @@ export default function Dashboard() {
               <div className="flex flex-col justify-end gap-3">
                 <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
-                    <Server className="w-3 h-3" /> Blocked Time
+                    <Server className="w-3 h-3" /> Block Time
                   </p>
-                  <p className="text-2xl font-mono text-red-400 font-semibold glow-text-red">
-                    {currentBN.currentQueue} <span className="text-sm text-slate-500">min</span>
-                  </p>
+                  <p className="text-2xl font-mono text-red-400 font-semibold glow-text-red">{currentBN.currentQueue} <span className="text-sm text-slate-500">min</span></p>
                 </div>
                 <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
                     <Activity className="w-3 h-3" /> Starved Time
                   </p>
-                  <p className="text-2xl font-mono text-red-400 font-semibold glow-text-red">
-                    {currentBN.starvedMin} <span className="text-sm text-slate-500">min</span>
-                  </p>
+                  <p className="text-2xl font-mono text-red-400 font-semibold glow-text-red">{currentBN.starvedMin} <span className="text-sm text-slate-500">min</span></p>
                 </div>
               </div>
             </div>
@@ -172,33 +196,28 @@ export default function Dashboard() {
 
           {/* Predicted Bottleneck */}
           <div className="relative overflow-hidden rounded-xl border border-blue-500/20 bg-gradient-to-br from-[#0d1624] to-[#0a0f18] p-6 shadow-lg shadow-blue-900/10 industrial-card">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6 relative z-10">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-500/10 rounded-lg border border-blue-500/20">
                   <TrendingUp className="w-5 h-5 text-blue-400" />
                 </div>
-                <h2 className="text-lg font-semibold text-blue-100">
-                  Predicted Bottleneck <span className="text-sm font-normal text-blue-400/60 ml-2">(Next 4h)</span>
-                </h2>
+                <h2 className="text-lg font-semibold text-blue-100">Predicted Bottleneck <span className="text-sm font-normal text-blue-400/60 ml-2">(Next 4h)</span></h2>
               </div>
               <div className="flex items-center gap-2 bg-blue-500/10 px-3 py-1.5 rounded-full border border-blue-500/20">
                 <ShieldAlert className="w-4 h-4 text-blue-400" />
-                <span className="text-xs font-mono text-blue-300">
-                  Gap: {data.confidenceGap.toFixed(2)}
-                </span>
+                <span className="text-xs font-mono text-blue-300">Gap: {data.confidenceGap.toFixed(2)}</span>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
               <div className="flex flex-col justify-between">
                 <div>
                   <p className="text-sm text-blue-400/70 uppercase tracking-wider mb-1">AI Prediction</p>
                   <Link to={`/station/${predictedBN.machineKey}`} className="text-2xl font-bold text-white hover:text-blue-300 transition-colors inline-flex items-center gap-2">
-                    {predictedBN.machineKey}
+                    {predictedBN.name.split(' (')[0]}
                     <ArrowUpRight className="w-5 h-5 opacity-50" />
                   </Link>
-                  <p className="text-xs text-slate-500 mt-1">{predictedBN.name.split('(')[1]?.replace(')', '')}</p>
                 </div>
-                <div className="mt-4 bg-black/40 rounded-lg p-3 border border-blue-900/30">
+                <div className="mt-4 bg-black/40 rounded-lg p-3 border border-blue-900/30 w-full sm:w-3/4">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
                     <AlertTriangle className="w-3 h-3 text-blue-400" /> Bottleneck Score
                   </p>
@@ -208,26 +227,22 @@ export default function Dashboard() {
               <div className="flex flex-col justify-end gap-3">
                 <div className="bg-black/40 rounded-lg p-3 border border-blue-900/30">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
-                    <Zap className="w-3 h-3" /> Blocked Time
+                    <Zap className="w-3 h-3" /> Block Time
                   </p>
-                  <p className="text-2xl font-mono text-blue-400 font-semibold glow-text-blue">
-                    {predictedBN.predictedQueue} <span className="text-sm text-slate-500">min</span>
-                  </p>
+                  <p className="text-2xl font-mono text-blue-400 font-semibold glow-text-blue">{predictedBN.predictedQueue} <span className="text-sm text-slate-500">min</span></p>
                 </div>
                 <div className="bg-black/40 rounded-lg p-3 border border-blue-900/30">
                   <p className="text-xs text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2">
                     <Activity className="w-3 h-3" /> Starved Time
                   </p>
-                  <p className="text-2xl font-mono text-blue-400 font-semibold glow-text-blue">
-                    {predictedBN.starvedMin} <span className="text-sm text-slate-500">min</span>
-                  </p>
+                  <p className="text-2xl font-mono text-blue-400 font-semibold glow-text-blue">{predictedBN.starvedMin} <span className="text-sm text-slate-500">min</span></p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Bottleneck Risk Ranking Table */}
+        {/* ── Risk Ranking Table ── */}
         <div className="lg:col-span-8 rounded-xl border border-slate-800/60 bg-[#121827]/80 backdrop-blur-sm shadow-xl p-6 industrial-card">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -241,9 +256,8 @@ export default function Dashboard() {
                 <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
                   <th className="pb-3 px-4 font-medium">Rank</th>
                   <th className="pb-3 px-4 font-medium">Station</th>
-                  <th className="pb-3 px-4 font-medium text-right">Blocked (min)</th>
-                  <th className="pb-3 px-4 font-medium text-right">Starved (min)</th>
-                  <th className="pb-3 px-4 font-medium text-right">Score</th>
+                  <th className="pb-3 px-4 font-medium text-right">Block Time</th>
+                  <th className="pb-3 px-4 font-medium text-right">Starved Time</th>
                   <th className="pb-3 px-4 font-medium text-right">Status</th>
                 </tr>
               </thead>
@@ -253,17 +267,16 @@ export default function Dashboard() {
                     <td className="py-4 px-4 text-slate-500 font-mono text-sm">#{index + 1}</td>
                     <td className="py-4 px-4">
                       <Link to={`/station/${station.machineKey}`} className="font-medium text-slate-200 group-hover:text-blue-400 transition-colors block">
-                        {station.name.split('(')[0].trim()}
+                        {station.name}
                       </Link>
                       <span className="text-xs text-slate-500 font-mono">{station.machineId}</span>
                     </td>
                     <td className="py-4 px-4 text-right font-mono text-slate-300">{station.currentQueue}</td>
                     <td className="py-4 px-4 text-right font-mono text-slate-300">{station.starvedMin}</td>
-                    <td className="py-4 px-4 text-right font-mono text-amber-400 font-semibold">{station.riskScore.toFixed(2)}</td>
                     <td className="py-4 px-4 text-right">
-                      <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border", getStatusColor(station.status))}>
-                        <span className={cn("w-1.5 h-1.5 rounded-full", getStatusDot(station.status))}></span>
-                        {station.stateLabel.replace(/_/g, ' ')}
+                      <span className={cn('inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border', getStatusColor(station.status))}>
+                        <span className={cn('w-1.5 h-1.5 rounded-full', getStatusDot(station.status))}></span>
+                        {station.status.toUpperCase()}
                       </span>
                     </td>
                   </tr>
@@ -273,7 +286,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Factory Overview Grid */}
+        {/* ── Factory Overview ── */}
         <div className="lg:col-span-4 rounded-xl border border-slate-800/60 bg-[#121827]/80 backdrop-blur-sm shadow-xl p-6 flex flex-col industrial-card">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -281,32 +294,30 @@ export default function Dashboard() {
               Factory Overview
             </h2>
           </div>
-          <div className="flex-1 grid grid-cols-1 gap-3">
+          <div className="flex-1 grid grid-cols-1 gap-4">
             {data.stations.map(station => (
               <Link
                 key={station.id}
                 to={`/station/${station.machineKey}`}
-                className="block p-3 rounded-lg border border-slate-800/80 bg-[#0d1320] hover:bg-[#151c2d] hover:border-slate-700 transition-all group relative overflow-hidden"
+                className="block p-4 rounded-lg border border-slate-800/80 bg-[#0d1320] hover:bg-[#151c2d] hover:border-slate-700 transition-all group relative overflow-hidden"
               >
-                <div className={cn("absolute left-0 top-0 bottom-0 w-1 opacity-80", getStatusDot(station.status))}></div>
-                <div className="flex justify-between items-start mb-2 pl-2">
+                <div className={cn('absolute left-0 top-0 bottom-0 w-1 opacity-80', getStatusDot(station.status))}></div>
+                <div className="flex justify-between items-start mb-3 pl-2">
                   <div>
-                    <h3 className="text-sm font-medium text-slate-200 group-hover:text-blue-400 transition-colors">
-                      {station.name.split('(')[0].trim()}
-                    </h3>
+                    <h3 className="text-sm font-medium text-slate-200 group-hover:text-blue-400 transition-colors">{station.name.split(' (')[0]}</h3>
                     <p className="text-xs text-slate-500 font-mono">{station.machineId}</p>
                   </div>
-                  <span className={cn("text-xs px-2 py-0.5 rounded border", getStatusColor(station.status))}>
-                    {station.machineKey}
+                  <span className={cn('text-xs px-2 py-0.5 rounded border', getStatusColor(station.status))}>
+                    {station.status.toUpperCase()}
                   </span>
                 </div>
-                <div className="flex items-end justify-between gap-3 mt-1 pl-2">
+                <div className="flex items-end justify-between gap-4 mt-2 pl-2">
                   <div className="flex-1 bg-black/30 rounded-lg p-2 border border-slate-800/50">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Blocked</p>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Block Time</p>
                     <div className="flex justify-between items-end">
-                      <p className="text-base font-mono text-white leading-none">{station.currentQueue} <span className="text-xs text-slate-500">min</span></p>
-                      <div className="h-6 w-14 shrink-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                      <p className="text-lg font-mono text-white leading-none">{station.currentQueue}</p>
+                      <div className="h-8 w-16 shrink-0" style={{ minWidth: 64, minHeight: 32 }}>
+                        <ResponsiveContainer width="100%" height="100%" minHeight={32}>
                           <LineChart data={station.chartData.slice(-10)}>
                             <Line type="monotone" dataKey="blocked_min"
                               stroke={station.status === 'red' ? '#ef4444' : station.status === 'yellow' ? '#f59e0b' : '#10b981'}
@@ -317,11 +328,11 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex-1 bg-black/30 rounded-lg p-2 border border-slate-800/50">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Starved</p>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Starved Time</p>
                     <div className="flex justify-between items-end">
-                      <p className="text-base font-mono text-white leading-none">{station.starvedMin} <span className="text-xs text-slate-500">min</span></p>
-                      <div className="h-6 w-14 shrink-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                      <p className="text-lg font-mono text-white leading-none">{station.starvedMin}</p>
+                      <div className="h-8 w-16 shrink-0" style={{ minWidth: 64, minHeight: 32 }}>
+                        <ResponsiveContainer width="100%" height="100%" minHeight={32}>
                           <LineChart data={station.chartData.slice(-10)}>
                             <Line type="monotone" dataKey="starved_min" stroke="#fb923c" strokeWidth={2} dot={false} isAnimationActive={false} />
                           </LineChart>

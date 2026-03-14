@@ -121,14 +121,18 @@ def station_detail(machine_id: str, history_n: int = Query(default=50, ge=5, le=
             "state":       str(row.get(f"{m}_state_label", "NORMAL")),
         })
 
+    tail5 = df.tail(5)
     comparison = []
     for mx in MACHINES:
+        current_score   = safe_float(latest.get(f"{mx}_bottleneck_score", 0))
+        predicted_score = round(float(tail5[f"{mx}_bottleneck_score"].mean()), 4)
         comparison.append({
-            "machine": mx,
-            "blocked": safe_float(latest.get(f"{mx}_blocked_min", 0)),
-            "starved": safe_float(latest.get(f"{mx}_starved_min", 0)),
-            "score":   safe_float(latest.get(f"{mx}_bottleneck_score", 0)),
-            "state":   str(latest.get(f"{mx}_state_label", "NORMAL")),
+            "machine":        mx,
+            "blocked":        safe_float(latest.get(f"{mx}_blocked_min", 0)),
+            "starved":        safe_float(latest.get(f"{mx}_starved_min", 0)),
+            "score":          current_score,
+            "predictedScore": predicted_score,
+            "state":          str(latest.get(f"{mx}_state_label", "NORMAL")),
         })
 
     state = str(latest.get(f"{m}_state_label", "NORMAL"))
