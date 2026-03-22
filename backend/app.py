@@ -3,14 +3,28 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import math
 import os
+import requests
+from datetime import datetime, timezone, timedelta
 
 app = FastAPI(title="Smart Factory API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# ─── Supabase ─────────────────────────────────────────────────────────────────
+SUPABASE_URL = "https://cnfuvzrhdfsbozqqveld.supabase.co"
+SUPABASE_KEY = "sb_publishable_SdGZ91A-anObZqSE8OoTVg_4M1efEYn"
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "return=minimal"
+}
+
+# ─── Dataset ──────────────────────────────────────────────────────────────────
 DATA_FILE = "dataset_with_pred.csv" if os.path.exists("dataset_with_pred.csv") else "dataset.csv"
 df = pd.read_csv(DATA_FILE)
 HAS_PRED = any("predicted" in c for c in df.columns)
-print(f"Loaded: {DATA_FILE} | rows={len(df)} | has_predictions={HAS_PRED}")
+TOTAL_ROWS = len(df)
+print(f"Loaded: {DATA_FILE} | rows={TOTAL_ROWS} | has_predictions={HAS_PRED}")
 
 MACHINES = ["M1", "M2", "M3", "M4", "M5", "M6"]
 MACHINE_META = {
@@ -22,6 +36,13 @@ MACHINE_META = {
     "M6": {"name": "Station M6", "type": "Dispatch & Sorting", "machineId": "DSP-777"},
 }
 ACTIVE_MIN = 1.0
+BKK = timezone(timedelta(hours=7))
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+def is_working_hours(dt: datetime) -> bool:
+    local = dt.astimezone(BKK)
+    return local.weekday() < 5 and 8 <= local.hour < 17
 
 
 def safe_float(val):
@@ -33,8 +54,8 @@ def safe_float(val):
 
 
 def state_to_status(label: str) -> str:
-    if label in ("BOTTLENECK_ACTIVE", "BOTTLENECK_WEAK"):                        return "red"
-    if label in ("BLOCK_DOMINANT", "STARVE_DOMINANT", "MIXED_PRESSURE"):         return "yellow"
+    if label in ("BOTTLENECK_ACTIVE", "BOTTLENECK_WEAK"):                return "red"
+    if label in ("BLOCK_DOMINANT", "STARVE_DOMINANT", "MIXED_PRESSURE"): return "yellow"
     return "green"
 
 
@@ -61,10 +82,69 @@ def get_pred_state(row, m: str) -> str:
     return "NORMAL"
 
 
+# ─── Supabase helpers ─────────────────────────────────────────────────────────
+def supabase_get(key: str):
+    try:
+        res = requests.get(
+            f"{SUPABASE_URL}/rest/v1/app_state?key=eq.{key}&select=value",
+            headers=HEADERS, timeout=5
+        )
+        data = res.json()
+        return data[0]["value"] if data else None
+    except Exception as e:
+        print(f"Supabase GET error: {e}")
+        return None
+
+
+def supabase_set(key: str, value: str):
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/app_state",
+            headers={**HEADERS, "Prefer": "resolution=merge-duplicates"},
+            json={"key": key, "value": value},
+            timeout=5
+        )
+    except Exception as e:
+        print(f"Supabase SET error: {e}")
+
+
+def get_current_row() -> int:
+    now = datetime.now(timezone.utc)
+    working = is_working_hours(now)
+
+    row_str = supabase_get("current_row")
+    current_row = int(row_str) if row_str is not None else 0
+
+    if working:
+        last_str = supabase_get("last_advanced")
+        should_advance = False
+        if last_str is None:
+            should_advance = True
+        else:
+            try:
+                last_dt = datetime.fromisoformat(last_str)
+                if (now - last_dt).total_seconds() >= 15 * 60:
+                    should_advance = True
+            except Exception:
+                should_advance = True
+
+        if should_advance:
+            next_row = (current_row + 1) % TOTAL_ROWS
+            supabase_set("current_row", str(next_row))
+            supabase_set("last_advanced", now.isoformat())
+            print(f"Advanced row: {current_row} -> {next_row}")
+            return next_row
+
+    return current_row
+
+
+# ─── API ──────────────────────────────────────────────────────────────────────
 @app.get("/api/dashboard")
 def dashboard():
-    latest  = df.iloc[-1]
-    history = df.tail(25)
+    current_row = get_current_row()
+    latest  = df.iloc[current_row]
+    start   = max(0, current_row - 24)
+    history = df.iloc[start:current_row + 1]
 
     stations = []
     for m in MACHINES:
@@ -74,8 +154,6 @@ def dashboard():
         pred_score = safe_float(latest.get(f"{m}_predicted_bottleneck_score", 0)) if HAS_PRED else 0.0
         b_min      = safe_float(latest.get(f"{m}_blocked_min", 0))
         s_min      = safe_float(latest.get(f"{m}_starved_min", 0))
-
-        # predicted block/starve: ใช้ tb/ts จาก predicted window
         pred_b_min = safe_float(latest.get(f"{m}_tb", 0)) if HAS_PRED else b_min
         pred_s_min = safe_float(latest.get(f"{m}_ts", 0)) if HAS_PRED else s_min
 
@@ -98,8 +176,8 @@ def dashboard():
             "machineId":           meta["machineId"],
             "currentQueue":        b_min,
             "starvedMin":          s_min,
-            "predictedQueue":      pred_b_min,      # ← predicted block time
-            "predictedStarvedMin": pred_s_min,      # ← predicted starved time
+            "predictedQueue":      pred_b_min,
+            "predictedStarvedMin": pred_s_min,
             "riskScore":           score,
             "predictedScore":      pred_score,
             "status":              state_to_status(state),
@@ -109,12 +187,10 @@ def dashboard():
             "chartData":           chart,
         })
 
-    # current bottleneck
     bn_machine = str(latest.get("bottleneck_machine", "M1"))
     bn_score   = safe_float(latest.get("bottleneck_score", 0))
     bn_gap     = safe_float(latest.get("bottleneck_confidence_gap", 0))
 
-    # predicted bottleneck
     if HAS_PRED:
         pred_bn = str(latest.get("predicted_bottleneck_machine", ""))
         if not pred_bn or pred_bn == "nan":
@@ -123,8 +199,7 @@ def dashboard():
         pred_bn_score = safe_float(latest.get("predicted_bottleneck_score", 0))
         pred_bn_gap   = safe_float(latest.get("predicted_confidence_gap", 0))
     else:
-        tail5         = df.tail(5)
-        pscores       = {m: tail5[f"{m}_bottleneck_score"].mean() for m in MACHINES}
+        pscores       = {m: safe_float(latest.get(f"{m}_bottleneck_score", 0)) for m in MACHINES}
         pred_bn       = max(pscores, key=pscores.get)
         pred_bn_score = pscores[pred_bn]
         pred_bn_gap   = 0.0
@@ -136,9 +211,10 @@ def dashboard():
         "bottleneckScore":          bn_score,
         "predictedBottleneckScore": pred_bn_score,
         "confidenceGap":            bn_gap,
-        "predictedConfidenceGap":   pred_bn_gap,   # ← fixed
+        "predictedConfidenceGap":   pred_bn_gap,
         "windowIndex":              int(latest["window_index"]),
-        "totalWindows":             len(df),
+        "currentRow":               current_row,
+        "totalWindows":             TOTAL_ROWS,
         "hasPredictions":           HAS_PRED,
     }
 
@@ -149,8 +225,10 @@ def station_detail(machine_id: str, history_n: int = Query(default=50, ge=5, le=
     if m not in MACHINES:
         return {"error": f"Unknown machine {m}"}
 
-    latest  = df.iloc[-1]
-    history = df.tail(history_n)
+    current_row = get_current_row()
+    latest  = df.iloc[current_row]
+    start   = max(0, current_row - history_n + 1)
+    history = df.iloc[start:current_row + 1]
 
     chart = [
         {
@@ -179,7 +257,6 @@ def station_detail(machine_id: str, history_n: int = Query(default=50, ge=5, le=
     state      = str(latest.get(f"{m}_state_label", "NORMAL"))
     pred_state = get_pred_state(latest, m)
     meta       = MACHINE_META[m]
-
     pred_b_min = safe_float(latest.get(f"{m}_tb", 0)) if HAS_PRED else safe_float(latest.get(f"{m}_blocked_min", 0))
     pred_s_min = safe_float(latest.get(f"{m}_ts", 0)) if HAS_PRED else safe_float(latest.get(f"{m}_starved_min", 0))
 
@@ -201,13 +278,16 @@ def station_detail(machine_id: str, history_n: int = Query(default=50, ge=5, le=
         "chartData":           chart,
         "comparison":          comparison,
         "windowIndex":         int(latest["window_index"]),
+        "currentRow":          current_row,
         "hasPredictions":      HAS_PRED,
     }
 
 
 @app.get("/api/history")
 def history(n: int = Query(default=100, ge=10, le=17520)):
-    tail = df.tail(n)
+    current_row = get_current_row()
+    start = max(0, current_row - n + 1)
+    tail  = df.iloc[start:current_row + 1]
     result = []
     for _, row in tail.iterrows():
         result.append({
